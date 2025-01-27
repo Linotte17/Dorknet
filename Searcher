@@ -1,0 +1,118 @@
+import argparse
+import requests
+import time
+import random
+from os import path
+
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
+
+# Default configuration
+DEFAULT_PROXY_FILE = "proxies.txt"
+DEFAULT_DORKS_FILE = "dorks.txt"
+DEFAULT_OUTPUT_FILE = "results.txt"
+DEFAULT_REQUESTS = 10
+DEFAULT_DELAY = 5
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36"
+]
+
+def read_file(filename):
+    with open(filename, 'r') as f:
+        return [line.strip() for line in f.readlines() if line.strip()]
+
+def get_search_url(engine, dork, page):
+    if engine == "google":
+        return f"https://www.google.com/search?q={dork}&start={page*10}"
+    elif engine == "bing":
+        return f"https://www.bing.com/search?q={dork}&first={page*10 + 1}"
+    return None
+
+def parse_results(html, engine):
+    links = []
+    if BeautifulSoup:
+        soup = BeautifulSoup(html, 'html.parser')
+        if engine == "google":
+            for g in soup.find_all('div', class_='g'):
+                a = g.find('a')
+                if a and a.has_attr('href'):
+                    links.append(a['href'])
+        elif engine == "bing":
+            for li in soup.find_all('li', class_='b_algo'):
+                a = li.find('a')
+                if a and a.has_attr('href'):
+                    links.append(a['href'])
+    else:
+        # Fallback to regex if BeautifulSoup isn't available
+        import re
+        links = re.findall(r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+', html)
+    return links
+
+def main():
+    parser = argparse.ArgumentParser(description="Dork Searcher for Termux")
+    parser.add_argument("--proxies", default=DEFAULT_PROXY_FILE, help="Proxy file path")
+    parser.add_argument("--dorks", default=DEFAULT_DORKS_FILE, help="Dorks file path")
+    parser.add_argument("--output", default=DEFAULT_OUTPUT_FILE, help="Output file path")
+    parser.add_argument("--requests", type=int, default=DEFAULT_REQUESTS, help="Number of requests per dork")
+    parser.add_argument("--engine", choices=["google", "bing"], default="google", help="Search engine to use")
+    parser.add_argument("--delay", type=int, default=DEFAULT_DELAY, help="Delay between requests in seconds")
+    
+    args = parser.parse_args()
+
+    # Validate files
+    if not path.exists(args.proxies):
+        print(f"Proxy file {args.proxies} not found!")
+        return
+    if not path.exists(args.dorks):
+        print(f"Dorks file {args.dorks} not found!")
+        return
+
+    proxies = read_file(args.proxies)
+    dorks = read_file(args.dorks)
+    
+    with open(args.output, 'a') as output_file:
+        for dork in dorks:
+            print(f"Processing dork: {dork}")
+            for page in range(args.requests):
+                proxy = random.choice(proxies) if proxies else None
+                proxies_dict = {
+                    "http": f"http://{proxy}",
+                    "https": f"http://{proxy}"
+                } if proxy else None
+                
+                url = get_search_url(args.engine, dork, page)
+                if not url:
+                    print("Invalid search engine selected")
+                    return
+
+                try:
+                    headers = {"User-Agent": random.choice(USER_AGENTS)}
+                    response = requests.get(
+                        url,
+                        proxies=proxies_dict,
+                        headers=headers,
+                        timeout=30
+                    )
+                    
+                    if response.status_code == 200:
+                        links = parse_results(response.text, args.engine)
+                        for link in links:
+                            output_file.write(f"{link}\n")
+                        print(f"[+] Page {page+1} processed - Found {len(links)} links")
+                    else:
+                        print(f"[-] Error: Received status code {response.status_code}")
+                    
+                    time.sleep(args.delay)
+                
+                except Exception as e:
+                    print(f"[-] Error: {str(e)}")
+                    time.sleep(args.delay * 2)  # Longer delay on error
+                    continue
+
+    print(f"Search completed. Results saved to {args.output}")
+
+if __name__ == "__main__":
+    main()
