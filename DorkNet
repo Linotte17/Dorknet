@@ -1,0 +1,117 @@
+#!/bin/bash
+
+# DorkNet - Dork Searcher with Proxy Support
+# Author: Your Name
+# Usage: ./DorkNet.sh -p proxies.txt -d dorks.txt -n 5 -o results.txt
+
+# ANSI Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
+
+# User Agents
+USER_AGENTS=(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Safari/605.1.15"
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36"
+)
+
+show_help() {
+    echo -e "${GREEN}Usage:${NC}"
+    echo -e "$0 -p <proxy_file> -d <dork_file> -n <num_requests> -o <output_file>"
+    echo -e "\n${GREEN}Options:${NC}"
+    echo -e "-p  Path to proxy file (one proxy per line)"
+    echo -e "-d  Path to dork file (one dork per line)"
+    echo -e "-n  Number of requests per dork"
+    echo -e "-o  Output file to save results"
+    exit 0
+}
+
+check_dependencies() {
+    if ! command -v curl &> /dev/null; then
+        echo -e "${RED}Error: curl is not installed. Install with 'pkg install curl'${NC}"
+        exit 1
+    fi
+}
+
+# Initialize variables
+declare -a proxies
+declare -a dorks
+
+while getopts ":p:d:n:o:h" opt; do
+    case $opt in
+        p) proxy_file="$OPTARG";;
+        d) dork_file="$OPTARG";;
+        n) num_requests="$OPTARG";;
+        o) output_file="$OPTARG";;
+        h) show_help;;
+        \?) echo -e "${RED}Invalid option: -$OPTARG${NC}" >&2; exit 1;;
+        :) echo -e "${RED}Option -$OPTARG requires an argument.${NC}" >&2; exit 1;;
+    esac
+done
+
+# Validate mandatory arguments
+if [[ -z $proxy_file || -z $dork_file || -z $num_requests || -z $output_file ]]; then
+    echo -e "${RED}Error: All options are required!${NC}"
+    show_help
+    exit 1
+fi
+
+# Check file existence
+[[ -f $proxy_file ]] || { echo -e "${RED}Proxy file not found!${NC}"; exit 1; }
+[[ -f $dork_file ]] || { echo -e "${RED}Dork file not found!${NC}"; exit 1; }
+
+# Check dependencies
+check_dependencies
+
+# Read files
+mapfile -t proxies < "$proxy_file"
+mapfile -t dorks < "$dork_file"
+
+# Check array contents
+[[ ${#proxies[@]} -gt 0 ]] || { echo -e "${RED}No proxies found in file!${NC}"; exit 1; }
+[[ ${#dorks[@]} -gt 0 ]] || { echo -e "${RED}No dorks found in file!${NC}"; exit 1; }
+
+# Main function
+search_dorks() {
+    local total_dorks=${#dorks[@]}
+    local total_requests=$((total_dorks * num_requests))
+    local current=1
+
+    echo -e "${GREEN}Starting DorkNet...${NC}"
+    echo -e "Total Dorks: $total_dorks"
+    echo -e "Requests per Dork: $num_requests"
+    echo -e "Total Requests: $total_requests"
+    echo -e "Output File: $output_file"
+    echo -e "Proxies Available: ${#proxies[@]}"
+    echo -e "====================================="
+
+    for dork in "${dorks[@]}"; do
+        encoded_dork=$(printf '%s' "$dork" | sed 's/ /+/g')
+        for ((i=1; i<=num_requests; i++)); do
+            # Select random proxy and user agent
+            proxy=${proxies[$RANDOM % ${#proxies[@]}]}
+            ua=${USER_AGENTS[$RANDOM % ${#USER_AGENTS[@]}]}
+
+            echo -e "${YELLOW}[$current/$total_requests] Searching: ${dork}${NC}"
+            echo -e "Using Proxy: $proxy"
+
+            # Perform the request
+            echo -e "\n=== DORK: $dork === PROXY: $proxy ===\n" >> "$output_file"
+            curl -s -k -L -A "$ua" --proxy "$proxy" --max-time 20 \
+                "https://www.google.com/search?q=$encoded_dork" >> "$output_file"
+            
+            echo -e "\n\n" >> "$output_file"
+            ((current++))
+            
+            # Random delay to avoid detection
+            sleep $((RANDOM % 3 + 1))
+        done
+    done
+
+    echo -e "${GREEN}\nSearch completed! Results saved to $output_file${NC}"
+}
+
+# Start search
+search_dorks
